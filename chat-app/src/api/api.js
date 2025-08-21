@@ -1,5 +1,5 @@
 import axios from 'axios';
-const API_URL = 'http://10.130.84.248:3000'; //- update with ur wifi ip
+const API_URL = 'http://10.130.84.248:3000'; //=change with wifi ip adress
 
 export const register = (data) => axios.post(`${API_URL}/auth/register`, data);
 export const login = (data) => axios.post(`${API_URL}/auth/login`, data);
@@ -11,5 +11,10 @@ export const getMessages = (recipientId, token) =>
   });
 export const sendMessage = (message, token) =>
   axios.post(`${API_URL}/messages/send`, message, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+export const deleteMessage = (messageId, token) =>
+  axios.delete(`${API_URL}/messages/${messageId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
