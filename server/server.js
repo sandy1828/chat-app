@@ -9,7 +9,7 @@ const cors = require("cors");
 // ---------- Config Variables ----------
 const PORT = 3000;
 const MONGO_URI =
-  "mongodb+srv://chatapp-90:8169576470@cluster0.biywaf7.mongodb.net/";   //--change ur db link
+  "mongodb+srv://chatapp-90:8169576470@cluster0.biywaf7.mongodb.net/"; //-change ur dblink
 const JWT_SECRET = "super-strong-secret-key";
 
 const app = express();
@@ -43,12 +43,9 @@ mongoose
     process.exit(1);
   });
 
+// ---------- Utils ----------
+const getRoomName = (id1, id2) => [String(id1), String(id2)].sort().join("-");
 
-  app.get("/messages/unread/:userId", async (req, res) => {
-  const userId = req.params.userId;
-  const count = await Message.countDocuments({ senderId: userId, recipientId: req.user._id, read: false });
-  res.json({ count });
-});
 // ---------- Schemas & Models ----------
 const userSchema = new mongoose.Schema(
   {
@@ -70,19 +67,12 @@ const User = mongoose.model("User", userSchema);
 
 const messageSchema = new mongoose.Schema(
   {
-    senderId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    recipientId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
+    senderId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    recipientId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     conversationId: { type: String, index: true },
     content: { type: String, trim: true },
-    read: { type: Boolean, default: false },
+    status: { type: String, enum: ["sent", "delivered", "read"], default: "sent" },
+    replyTo: { type: mongoose.Schema.Types.ObjectId, ref: "Message", default: null },
     timestamp: { type: Date, default: Date.now },
   },
   { timestamps: true }
@@ -96,9 +86,6 @@ messageSchema.pre("save", function (next) {
   next();
 });
 const Message = mongoose.model("Message", messageSchema);
-
-// ---------- Utils ----------
-const getRoomName = (id1, id2) => [String(id1), String(id2)].sort().join("-");
 
 // ---------- Auth Middleware ----------
 const authMiddleware = async (req, res, next) => {
@@ -120,7 +107,8 @@ const authMiddleware = async (req, res, next) => {
 // ---------- Routes ----------
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// register
+// Register
+// Register
 app.post("/auth/register", async (req, res) => {
   try {
     const { username, email, password } = req.body || {};
@@ -135,9 +123,15 @@ app.post("/auth/register", async (req, res) => {
     const user = new User({ username, email, password: hashed });
     await user.save();
 
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, {
-      expiresIn: "7d",
+    // ✅ Emit event after user saved
+    io.emit("user:new", {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      online: user.online,
     });
+
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: "7d" });
     return res.json({
       token,
       user: {
@@ -153,56 +147,8 @@ app.post("/auth/register", async (req, res) => {
   }
 });
 
-// ---------- Protected Routes ----------
 
-// get all users (except self)
-app.get("/users", authMiddleware, async (req, res) => {
-  try {
-    const users = await User.find({ _id: { $ne: req.user._id } }).select(
-      "-password"
-    );
-    res.json(users);
-  } catch (err) {
-    console.error("get users error:", err);
-    res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
-
-// get messages for a conversation with a specific user
-app.get(
-  "/conversations/:recipientId/messages",
-  authMiddleware,
-  async (req, res) => {
-    try {
-      const { recipientId } = req.params;
-      const room = getRoomName(req.user._id, recipientId);
-      const messages = await Message.find({ conversationId: room })
-        .sort({ createdAt: 1 })
-        .populate("senderId", "username email")
-        .populate("recipientId", "username email");
-
-      res.json(messages);
-    } catch (err) {
-      console.error("get conversation messages error:", err);
-      res.status(500).json({ error: "Failed to fetch messages" });
-    }
-  }
-);
-app.post("/messages/send", authMiddleware, async (req, res) => {
-  const { recipientId, text } = req.body;
-  const room = getRoomName(req.user._id, recipientId);
-
-  const message = await Message.create({
-    conversationId: room,
-    senderId: req.user._id,
-    recipientId,
-    text,
-  });
-
-  res.json(message);
-});
-
-// login
+// Login
 app.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -213,9 +159,7 @@ app.post("/auth/login", async (req, res) => {
     if (!user || !(await bcrypt.compare(password, user.password)))
       return res.status(401).json({ error: "Invalid credentials" });
 
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: "7d" });
     return res.json({
       token,
       user: {
@@ -231,11 +175,82 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
-/** ---------- Socket Authentication ---------- **/
+// Get all users except self
+app.get("/users", authMiddleware, async (req, res) => {
+  try {
+    const users = await User.find({ _id: { $ne: req.user._id } }).select("-password");
+    res.json(users);
+  } catch (err) {
+    console.error("get users error:", err);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// Get messages for a conversation
+app.get("/conversations/:recipientId/messages", authMiddleware, async (req, res) => {
+  try {
+    const { recipientId } = req.params;
+    const room = getRoomName(req.user._id, recipientId);
+
+    const messages = await Message.find({ conversationId: room })
+      .sort({ createdAt: 1 })
+      .populate("senderId", "username email")
+      .populate("recipientId", "username email")
+      .lean();
+
+    res.json(messages);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+// Send a message (REST fallback)
+// Send a message (REST fallback)
+app.post("/messages/send", authMiddleware, async (req, res) => {
+  try {
+    const { recipientId, content, text } = req.body;
+    const messageContent = content || text; // accept either
+
+    if (!recipientId || !messageContent) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const message = await Message.create({
+      senderId: req.user._id,
+      recipientId,
+      content: messageContent,
+      status: "sent",
+    });
+
+    res.json(message);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to send message" });
+  }
+});
+
+
+// Delete message
+app.delete("/messages/:id", authMiddleware, async (req, res) => {
+  try {
+    const message = await Message.findById(req.params.id);
+    if (!message) return res.status(404).json({ message: "Message not found" });
+    if (message.senderId.toString() !== req.user._id.toString())
+      return res.status(403).json({ message: "Not allowed" });
+
+    await message.deleteOne();
+    res.status(200).json({ message: "Deleted successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- Socket Authentication ----------
 io.use(async (socket, next) => {
   try {
-    const raw =
-      socket.handshake.auth?.token || socket.handshake.headers?.authorization;
+    const raw = socket.handshake.auth?.token || socket.handshake.headers?.authorization;
     const token = raw?.startsWith("Bearer ") ? raw.split(" ")[1] : raw;
     if (!token) return next(new Error("Authentication error: no token"));
 
@@ -250,8 +265,8 @@ io.use(async (socket, next) => {
   }
 });
 
-/** ---------- Socket Events ---------- **/
-// Global user socket tracking
+
+// ---------- Socket Events ----------
 const onlineUsers = {}; // userId -> Set of socketIds
 
 io.on("connection", async (socket) => {
@@ -276,6 +291,7 @@ io.on("connection", async (socket) => {
   });
 
   // Send message
+  // Send message
   socket.on("message:send", async (message) => {
     try {
       const { recipientId, content, replyTo } = message;
@@ -286,7 +302,7 @@ io.on("connection", async (socket) => {
         recipientId,
         content,
         replyTo: replyTo || null,
-        status: "sent", // initial status
+        status: "sent",
       });
 
       await newMessage.save();
@@ -294,13 +310,12 @@ io.on("connection", async (socket) => {
       const room = getRoomName(userId, recipientId);
       io.to(room).emit("message:new", newMessage);
 
-      // Mark as delivered if recipient online
-      if (onlineUsers[recipientId] && onlineUsers[recipientId].size > 0) {
+      // ✅ Mark delivered if recipient online
+      if (onlineUsers[recipientId]?.size > 0) {
         newMessage.status = "delivered";
         await newMessage.save();
         io.to(room).emit("message:status", { messageId: newMessage._id, status: "delivered" });
       }
-
     } catch (err) {
       console.error("message:send error:", err.message);
     }
@@ -318,7 +333,6 @@ io.on("connection", async (socket) => {
       for (let msg of unreadMessages) {
         msg.status = "read";
         await msg.save();
-
         const room = getRoomName(userId, senderId);
         io.to(room).emit("message:status", { messageId: msg._id, status: "read" });
       }
@@ -326,6 +340,7 @@ io.on("connection", async (socket) => {
       console.error("messages:read error:", err.message);
     }
   });
+
 
   // Typing indicators
   socket.on("typing:start", ({ recipientId }) => {
@@ -351,18 +366,12 @@ io.on("connection", async (socket) => {
   });
 });
 
-
-
-/** ---------- Error Middleware ---------- **/
+// ---------- Error Middleware ----------
 app.use((err, req, res, next) => {
   console.error("🔥 Server Error:", err);
   res.status(500).json({ error: "Something went wrong!" });
 });
 
-/** ---------- Safety Nets ---------- **/
-process.on("unhandledRejection", (reason) => {
-  console.error("UNHANDLED REJECTION:", reason);
-});
-process.on("uncaughtException", (err) => {
-  console.error("UNCAUGHT EXCEPTION:", err);
-});
+// ---------- Safety Nets ----------
+process.on("unhandledRejection", (reason) => console.error("UNHANDLED REJECTION:", reason));
+process.on("uncaughtException", (err) => console.error("UNCAUGHT EXCEPTION:", err));
