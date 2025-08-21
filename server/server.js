@@ -9,7 +9,7 @@ const cors = require("cors");
 // ---------- Config Variables ----------
 const PORT = 3000;
 const MONGO_URI =
-  "mongodb+srv://chatapp-90:8169576470@cluster0.biywaf7.mongodb.net/";
+  "mongodb+srv://chatapp-90:8169576470@cluster0.biywaf7.mongodb.net/";   //--change ur db link
 const JWT_SECRET = "super-strong-secret-key";
 
 const app = express();
