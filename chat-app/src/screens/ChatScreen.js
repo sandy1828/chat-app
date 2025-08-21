@@ -8,11 +8,12 @@ import {
   KeyboardAvoidingView,
   StyleSheet,
   Platform,
-  Alert
+  Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Swipeable } from "react-native-gesture-handler";
 import { AuthContext } from "../contexts/AuthContext";
-import { getMessages, sendMessage, deleteMessage } from "../api/api"; // Add deleteMessage API
+import { getMessages, sendMessage, deleteMessage } from "../api/api";
 import { getSocket } from "../socket";
 import MessageItem from "../components/MessageRow";
 
@@ -23,24 +24,25 @@ export default function ChatScreen({ route, navigation }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
-  const [onlineStatus, setOnlineStatus] = useState({ online: false, lastSeen: null });
+  const [onlineStatus, setOnlineStatus] = useState({
+    online: false,
+    lastSeen: null,
+  });
   const [recipientTyping, setRecipientTyping] = useState(false);
 
   const flatListRef = useRef();
   const socket = getSocket();
-  let typingTimeout = null;
+  const typingTimeout = useRef(null);
 
   useEffect(() => {
     fetchMessages();
   }, []);
 
-  // Socket setup
   useEffect(() => {
     if (!socket) return;
 
     socket.emit("join", { userId: user._id, recipientId: recipient._id });
 
-    // New message
     socket.on("message:new", (msg) => {
       if ([msg.senderId, msg.recipientId].includes(recipient._id)) {
         setMessages((prev) => [...prev, msg]);
@@ -48,22 +50,17 @@ export default function ChatScreen({ route, navigation }) {
       }
     });
 
-    // Message status updates (delivered/read)
     socket.on("message:status", ({ messageId, status }) => {
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg._id === messageId ? { ...msg, status } : msg
-        )
+        prev.map((msg) => (msg._id === messageId ? { ...msg, status } : msg))
       );
     });
 
-    // Online/offline
     socket.on("user:status", ({ userId, online, lastSeen }) => {
       if (userId === recipient._id)
         setOnlineStatus({ online, lastSeen: online ? null : lastSeen });
     });
 
-    // Typing
     socket.on("typing:start", ({ userId }) => {
       if (userId === recipient._id) setRecipientTyping(true);
     });
@@ -71,8 +68,12 @@ export default function ChatScreen({ route, navigation }) {
       if (userId === recipient._id) setRecipientTyping(false);
     });
 
-    // Mark messages as read when opening chat
-    socket.emit("messages:read", { senderId: recipient._id, recipientId: user._id });
+    socket.emit("messages:read", {
+      senderId: recipient._id,
+      recipientId: user._id,
+    });
+
+    socket.emit("get:userStatus", { userId: recipient._id });
 
     return () => {
       socket.off("message:new");
@@ -88,8 +89,12 @@ export default function ChatScreen({ route, navigation }) {
       const res = await getMessages(recipient._id, token);
       const data = res.data.map((msg) => ({
         ...msg,
-        senderId: typeof msg.senderId === "object" ? msg.senderId._id : msg.senderId,
-        recipientId: typeof msg.recipientId === "object" ? msg.recipientId._id : msg.recipientId,
+        senderId:
+          typeof msg.senderId === "object" ? msg.senderId._id : msg.senderId,
+        recipientId:
+          typeof msg.recipientId === "object"
+            ? msg.recipientId._id
+            : msg.recipientId,
       }));
       setMessages(data);
       scrollToEnd();
@@ -98,52 +103,58 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
-  const handleTextChange = (val) => {
-    setText(val);
-    if (!typingTimeout) socket.emit("typing:start", { recipientId: recipient._id });
-    if (typingTimeout) clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
-      socket.emit("typing:stop", { recipientId: recipient._id });
-      typingTimeout = null;
-    }, 2000);
-  };
+const handleTextChange = (val) => {
+  setText(val);
+  if (!socket) return;
+
+  socket.emit("typing:start", { userId: user._id, recipientId: recipient._id });
+
+  if (typingTimeout.current) clearTimeout(typingTimeout.current);
+
+  typingTimeout.current = setTimeout(() => {
+    socket.emit("typing:stop", { userId: user._id, recipientId: recipient._id });
+    typingTimeout.current = null;
+  }, 1000);
+};
+
 
   const handleSend = async () => {
-    if (!text.trim()) return;
+  if (!text.trim() || !socket) return;
 
-    const message = {
-      recipientId: recipient._id,
-      senderId: user._id,
-      content: text,
-      replyTo: replyTo ? replyTo._id : null,
-      replyContent: replyTo ? replyTo.content : null,
-      status: "sent",
-    };
-
-    setMessages((prev) => [...prev, message]);
-    setText("");
-    setReplyTo(null);
-
-    socket.emit("message:send", message);
-    scrollToEnd();
-
-    try {
-      const savedMessage = await sendMessage(
-        { recipientId: recipient._id, text, replyTo: message.replyTo },
-        token
-      );
-
-      // Update local state with real _id and status from backend
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg === message ? { ...msg, _id: savedMessage.data._id, status: "delivered" } : msg
-        )
-      );
-
-    } catch (err) {
-      console.error(err);
-    }
+  const messageData = {
+    recipientId: recipient._id,
+    senderId: user._id,
+    content: text,
+    replyTo: replyTo ? replyTo._id : null,
+    replyContent: replyTo ? replyTo.content : null,
+    status: "sending",
   };
+
+  setText("");
+  setReplyTo(null);
+
+  // Emit message to server
+  socket.emit("message:send", messageData);
+
+  // ❌ Remove this, server will emit "message:new"
+  // setMessages((prev) => [...prev, messageData]); ❌
+  // scrollToEnd(); ❌
+
+  try {
+    await sendMessage(
+      {
+        recipientId: recipient._id,
+        content: text,
+        replyTo: messageData.replyTo,
+      },
+      token
+    );
+  } catch (err) {
+    console.error(err);
+    Alert.alert("Error", "Failed to send message");
+  }
+};
+
 
   const handleDelete = async (messageId) => {
     try {
@@ -164,33 +175,39 @@ export default function ChatScreen({ route, navigation }) {
   );
 
   const scrollToEnd = () => {
-    if (flatListRef.current) flatListRef.current.scrollToEnd({ animated: true });
+    if (flatListRef.current)
+      flatListRef.current.scrollToEnd({ animated: true });
   };
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 78}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 110}
     >
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
           <Text style={styles.backText}>⬅</Text>
         </TouchableOpacity>
         <View style={{ alignItems: "center" }}>
-          <Text style={styles.headerText}>{recipient.username || recipient.email}</Text>
+          <Text style={styles.headerText}>
+            {recipient.username || recipient.email}
+          </Text>
           <Text style={styles.statusText}>
             {onlineStatus.online
               ? "Online"
               : onlineStatus.lastSeen
-              ? `Last seen: ${new Date(onlineStatus.lastSeen).toLocaleTimeString()}`
+              ? `Last seen: ${new Date(
+                  onlineStatus.lastSeen
+                ).toLocaleTimeString()}`
               : "Offline"}
           </Text>
         </View>
       </View>
 
-      {/* Messages */}
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -201,7 +218,11 @@ export default function ChatScreen({ route, navigation }) {
             renderLeftActions={renderLeftAction}
             onSwipeableLeftOpen={() => handleReply(item)}
           >
-            <MessageItem message={item} own={item.senderId === user._id} onDelete={handleDelete} />
+            <MessageItem
+              message={item}
+              own={item.senderId === user._id} // ✅ pass prop
+              onDelete={handleDelete}
+            />
           </Swipeable>
         )}
         keyboardShouldPersistTaps="handled"
@@ -210,14 +231,14 @@ export default function ChatScreen({ route, navigation }) {
         style={{ flex: 1 }}
       />
 
-      {/* Typing Indicator */}
       {recipientTyping && (
         <View style={styles.typingIndicator}>
-          <Text style={{ color: "#555" }}>{recipient.username || "User"} is typing...</Text>
+          <Text style={{ color: "#555" }}>
+            {recipient.username || "User"} is typing...
+          </Text>
         </View>
       )}
 
-      {/* Input + Reply Preview */}
       <View style={styles.inputWrapper}>
         {replyTo && (
           <View style={styles.replyPreview}>
