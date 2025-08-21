@@ -1,5 +1,5 @@
 import axios from 'axios';
-const API_URL = 'http://10.130.84.248:3000';
+const API_URL = 'http://10.130.84.248:3000'; //- update with ur wifi ip
 
 export const register = (data) => axios.post(`${API_URL}/auth/register`, data);
 export const login = (data) => axios.post(`${API_URL}/auth/login`, data);
