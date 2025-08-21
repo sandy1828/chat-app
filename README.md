@@ -1,6 +1,4 @@
-Here’s a professional `README.md` for your **React Native Chat App with Node.js + Socket.IO backend**. It includes setup, deployment, and usage instructions. You can directly include this in your project root.
 
-```markdown
 # React Native Chat App
 
 A real-time 1:1 chat application built with **React Native** frontend and **Node.js + Socket.IO** backend, using **MongoDB** as database. Supports online/offline status, typing indicators, message replies, and read/delivered status.
