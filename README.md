@@ -28,35 +28,11 @@ A real-time 1:1 chat application built with **React Native** frontend and **Node
 
 ---
 
-## **Folder Structure**
-
-```
-
-chat-app/
-│
-├── backend/               
-│   ├── server.js            # Server entry point # Node.js + Express + Socket.IO server
-│   └── package.json
-│
-├── frontend/               # React Native Expo project
-│   ├── components/         # UI components (MessageItem, etc.)
-│   ├── contexts/           # AuthContext
-│   ├── screens/            # ChatScreen, Login, Register,Home
-│   ├── api/                # API calls
-│   ├── socket.js           # Socket.IO client setup
-│   └── app.json / package.json
-│
-└── README.md
-
-````
-
----
-
 ## **Backend Setup**
 
 1. Clone the repo:
 ```bash
-git clone https://github.com/yourusername/chat-app.git
+git clone https://github.com/sandy1828/chat-app.git
 cd chat-app/backend
 ````
 
@@ -86,7 +62,7 @@ node server.js
 1. Navigate to frontend:
 
 ```bash
-cd ../frontend
+cd ../chat-app
 ```
 
 2. Install dependencies:
@@ -99,16 +75,16 @@ npm install
 
 ```js
 // api.js
-const API_URL = "https://your-backend-url.com/api";
+const API_URL = "https://your-backend-url.com/api"; change with ur wifi ip address
 
 // socket.js
-const SOCKET_URL = "https://your-backend-url.com";
+const SOCKET_URL = "https://your-backend-url.com"; change with ur wifi ip address
 ```
 
 4. Run in development:
 
 ```bash
-expo start
+npx expo start
 ```
 
 5. Run on Android/iOS:
@@ -121,8 +97,8 @@ expo run:ios
 6. Build for production:
 
 ```bash
-expo build:android
-expo build:ios
+npx expo build:android
+npx expo build:ios
 ```
 
 ---
@@ -184,9 +160,5 @@ expo build:ios
 ---
 
 
-## **Contributing**
 
-PRs and issues are welcome. For major changes, please open an issue first.
-
-]
 "# chat-app" 
