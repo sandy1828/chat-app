@@ -13,7 +13,7 @@ import { connectSocket } from "../socket";
 import moment from "moment";
 
 export default function HomeScreen({ navigation }) {
-  const { token, user, logoutUser } = useContext(AuthContext);
+  const { token, user, logout } = useContext(AuthContext); // fixed logout function
   const [users, setUsers] = useState([]);
   const [socket, setSocket] = useState(null);
 
@@ -33,13 +33,24 @@ export default function HomeScreen({ navigation }) {
       );
     });
 
-    // New message indicator
-    s.on("message:received", ({ fromUserId }) => {
+    // New message indicator + last message
+    s.on("message:received", ({ fromUserId, message }) => {
       setUsers((prev) =>
         prev.map((u) =>
-          u._id === fromUserId ? { ...u, hasNewMessage: true } : u
+          u._id === fromUserId
+            ? { ...u, hasNewMessage: true, lastMessage: message }
+            : u
         )
       );
+    });
+
+    // ✅ Naya user add hone par update karo
+    s.on("user:new", (newUser) => {
+      setUsers((prev) => {
+        const exists = prev.some((u) => u._id === newUser._id);
+        if (exists) return prev;
+        return [...prev, { ...newUser, hasNewMessage: false, lastMessage: "" }];
+      });
     });
 
     return () => s.disconnect();
@@ -48,22 +59,31 @@ export default function HomeScreen({ navigation }) {
   const fetchUsers = async () => {
     try {
       const res = await getUsers(token);
-      setUsers(res.data.map(u => ({ ...u, hasNewMessage: false })));
+      setUsers(
+        res.data.map((u) => ({ ...u, hasNewMessage: false, lastMessage: "" }))
+      );
     } catch (err) {
       console.error(err);
       Alert.alert("Error", "Failed to fetch users");
     }
   };
 
+  // ✅ Logout function
   const handleLogout = () => {
     Alert.alert("Logout", "Are you sure?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Logout", style: "destructive", onPress: logoutUser },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          await logout(); // clear token and user
+          navigation.replace("Login"); // go to login screen
+        },
+      },
     ]);
   };
 
   const openChat = (recipient) => {
-    // Reset new message indicator
     setUsers((prev) =>
       prev.map((u) =>
         u._id === recipient._id ? { ...u, hasNewMessage: false } : u
@@ -89,12 +109,13 @@ export default function HomeScreen({ navigation }) {
         />
         <View style={{ flex: 1, marginLeft: 12 }}>
           <Text style={styles.username}>{item.username || item.email}</Text>
-          <Text style={{ color: item.online ? "green" : "#555" }}>
-            {lastActive}
+          <Text style={{ color: "#555", fontSize: 13 }} numberOfLines={1}>
+            {item.lastMessage
+              ? `${item.hasNewMessage ? "📩 " : ""}${item.lastMessage}`
+              : lastActive}
           </Text>
         </View>
 
-        {/* New message indicator */}
         {item.hasNewMessage && <View style={styles.newMsgDot} />}
       </TouchableOpacity>
     );
@@ -114,6 +135,8 @@ export default function HomeScreen({ navigation }) {
         keyExtractor={(item) => item._id}
         renderItem={renderUser}
         contentContainerStyle={{ paddingVertical: 10 }}
+        refreshing={false}
+        onRefresh={fetchUsers}
       />
     </View>
   );
@@ -149,11 +172,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 4,
   },
-  statusDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-  },
+  statusDot: { width: 14, height: 14, borderRadius: 7 },
   username: { fontSize: 16, fontWeight: "600", color: "#222" },
   newMsgDot: {
     width: 12,
